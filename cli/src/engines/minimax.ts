@@ -2,7 +2,7 @@ import { ClaudeEngine } from "./claude.ts";
 import type { EngineOptions } from "./types.ts";
 
 /** Default MiniMax model used when no `--model` override is given */
-const DEFAULT_MODEL = "MiniMax-M3";
+const DEFAULT_MODEL = "MiniMax-M3.1-Flash";
 
 /**
  * Anthropic-compatible endpoint for each supported MiniMax region.
@@ -11,7 +11,7 @@ const DEFAULT_MODEL = "MiniMax-M3";
  */
 export const MINIMAX_REGION_BASE_URLS = {
 	global_en: "https://api.minimax.io/anthropic",
-	cn_zh: "https://api.minimaxi.com/anthropic",
+	cn_zh: "https://api.minimax.cn/anthropic",
 } as const;
 
 export type MiniMaxRegion = keyof typeof MINIMAX_REGION_BASE_URLS;

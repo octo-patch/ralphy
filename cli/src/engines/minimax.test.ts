@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { parseArgs } from "../cli/args.ts";
 import * as baseModule from "./base.ts";
 import { createEngine } from "./index.ts";
@@ -30,6 +30,7 @@ function setEnv(name: string, value: string | undefined): void {
 }
 
 afterEach(() => {
+	mock.restore();
 	for (const [name, value] of originalEnv) {
 		setEnv(name, value);
 	}
@@ -59,7 +60,7 @@ describe("MiniMax region resolution", () => {
 	it("exposes an endpoint for every supported region", () => {
 		expect(MINIMAX_REGION_BASE_URLS).toEqual({
 			global_en: "https://api.minimax.io/anthropic",
-			cn_zh: "https://api.minimaxi.com/anthropic",
+			cn_zh: "https://api.minimax.cn/anthropic",
 		});
 	});
 
@@ -71,7 +72,7 @@ describe("MiniMax region resolution", () => {
 
 	it("selects the CN endpoint when the CN region is configured", () => {
 		expect(resolveMiniMaxBaseUrl({ MINIMAX_REGION: "cn_zh" })).toBe(
-			"https://api.minimaxi.com/anthropic",
+			"https://api.minimax.cn/anthropic",
 		);
 	});
 
@@ -97,6 +98,73 @@ describe("MiniMax region resolution", () => {
 });
 
 describe("MiniMaxEngine", () => {
+	for (const streaming of [false, true]) {
+		for (const region of ["global_en", "cn_zh"] as const) {
+			for (const modelOverride of [undefined, "MiniMax-M3", "MiniMax-M2.7", "custom-model"]) {
+				it(`passes ${modelOverride ?? "the Flash default"} through the ${region} ${streaming ? "streaming" : "buffered"} CLI path`, async () => {
+					setEnv("MINIMAX_API_KEY", "test-key");
+					setEnv("MINIMAX_REGION", region);
+					setEnv("MINIMAX_BASE_URL", undefined);
+					const argv = ["node", "ralphy", "--minimax"];
+					if (modelOverride) argv.push("--model", modelOverride);
+					const { options } = parseArgs(argv);
+					const engine = createEngine(options.aiEngine);
+					const prompt = "Keep this context unchanged.\nPrevious tool result: done.";
+					const resultLine =
+						'{"type":"result","result":"Done","usage":{"input_tokens":1,"output_tokens":1}}';
+					let capturedArgs: string[] = [];
+					let capturedEnv: Record<string, string> | undefined;
+					let capturedStdin: string | undefined;
+					if (streaming) {
+						spyOn(baseModule, "execCommandStreaming").mockImplementation(
+							async (_command, args, _workDir, onLine, env, stdin) => {
+								capturedArgs = args;
+								capturedEnv = env;
+								capturedStdin = stdin;
+								onLine(resultLine);
+								return { exitCode: 0 };
+							},
+						);
+					} else {
+						spyOn(baseModule, "execCommand").mockImplementation(
+							async (_command, args, _workDir, env, stdin) => {
+								capturedArgs = args;
+								capturedEnv = env;
+								capturedStdin = stdin;
+								return { stdout: resultLine, stderr: "", exitCode: 0 };
+							},
+						);
+					}
+					const engineOptions = {
+						modelOverride: options.modelOverride,
+						engineArgs: ["--effort", "low"],
+					};
+					const result =
+						streaming && engine.executeStreaming
+							? await engine.executeStreaming(prompt, process.cwd(), () => {}, engineOptions)
+							: await engine.execute(prompt, process.cwd(), engineOptions);
+					const expectedModel = modelOverride ?? "MiniMax-M3.1-Flash";
+					expect(result.success).toBe(true);
+					expect(capturedArgs[capturedArgs.indexOf("--model") + 1]).toBe(expectedModel);
+					expect(capturedArgs[capturedArgs.indexOf("--effort") + 1]).toBe("low");
+					expect(capturedEnv?.ANTHROPIC_MODEL).toBe(expectedModel);
+					expect(capturedEnv?.ANTHROPIC_SMALL_FAST_MODEL).toBe(expectedModel);
+					expect(capturedEnv?.ANTHROPIC_BASE_URL).toBe(MINIMAX_REGION_BASE_URLS[region]);
+					expect(capturedStdin ?? capturedArgs[capturedArgs.indexOf("-p") + 1]).toBe(prompt);
+				});
+			}
+		}
+	}
+
+	it("preserves a custom endpoint and explicit model during execution", async () => {
+		setEnv("MINIMAX_REGION", "custom-region");
+		setEnv("MINIMAX_BASE_URL", "https://api.minimaxi.com/anthropic/");
+		const { captured } = mockExecCommand();
+		await new MiniMaxEngine().execute("test", process.cwd(), { modelOverride: "custom-model" });
+		expect(captured.env?.ANTHROPIC_BASE_URL).toBe("https://api.minimaxi.com/anthropic");
+		expect(captured.env?.ANTHROPIC_MODEL).toBe("custom-model");
+	});
+
 	it("registers the minimax CLI option and engine", () => {
 		const { options } = parseArgs(["node", "ralphy", "--minimax"]);
 		const engine = createEngine("minimax");
@@ -116,11 +184,11 @@ describe("MiniMaxEngine", () => {
 		await new MiniMaxEngine().execute("test", process.cwd());
 
 		const modelIndex = captured.args.indexOf("--model");
-		expect(captured.args[modelIndex + 1]).toBe("MiniMax-M3");
+		expect(captured.args[modelIndex + 1]).toBe("MiniMax-M3.1-Flash");
 		expect(captured.env).toEqual({
 			ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic",
-			ANTHROPIC_MODEL: "MiniMax-M3",
-			ANTHROPIC_SMALL_FAST_MODEL: "MiniMax-M3",
+			ANTHROPIC_MODEL: "MiniMax-M3.1-Flash",
+			ANTHROPIC_SMALL_FAST_MODEL: "MiniMax-M3.1-Flash",
 			ANTHROPIC_AUTH_TOKEN: "test-key",
 		});
 
@@ -135,7 +203,7 @@ describe("MiniMaxEngine", () => {
 
 		await new MiniMaxEngine().execute("test", process.cwd());
 
-		expect(captured.env?.ANTHROPIC_BASE_URL).toBe("https://api.minimaxi.com/anthropic");
+		expect(captured.env?.ANTHROPIC_BASE_URL).toBe("https://api.minimax.cn/anthropic");
 
 		spy.mockRestore();
 	});
@@ -174,7 +242,7 @@ describe("MiniMaxEngine", () => {
 
 		await new MiniMaxEngine().executeStreaming("test", process.cwd(), () => {});
 
-		expect(capturedEnv?.ANTHROPIC_BASE_URL).toBe("https://api.minimaxi.com/anthropic");
+		expect(capturedEnv?.ANTHROPIC_BASE_URL).toBe("https://api.minimax.cn/anthropic");
 		expect(capturedEnv?.ANTHROPIC_AUTH_TOKEN).toBe("test-key");
 
 		spy.mockRestore();

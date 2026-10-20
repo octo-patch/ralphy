@@ -80,7 +80,7 @@ ralphy --gemini     # Gemini CLI
 ralphy --minimax    # MiniMax through Claude Code
 ```
 
-The MiniMax engine uses `MiniMax-M3` by default and talks to the
+The MiniMax engine uses `MiniMax-M3.1-Flash` by default and talks to the
 Anthropic-compatible MiniMax endpoint. Set its API key before running it:
 
 ```bash
@@ -93,12 +93,13 @@ MiniMax is available on two platforms with separate hosts. Pick one with
 
 ```bash
 export MINIMAX_REGION="global_en"   # https://api.minimax.io/anthropic
-export MINIMAX_REGION="cn_zh"       # https://api.minimaxi.com/anthropic
+export MINIMAX_REGION="cn_zh"       # https://api.minimax.cn/anthropic
 ```
 
 `MINIMAX_BASE_URL` overrides the region when you need a custom or proxied
-endpoint. Use `--model` to select another MiniMax model, for example
-`ralphy --minimax --model MiniMax-M2.7 "add feature"`.
+endpoint. Use `--model MiniMax-M3` to select MiniMax-M3 instead:
+`ralphy --minimax --model MiniMax-M3 "add feature"`.
+Explicit model overrides, including custom or legacy IDs, are passed through unchanged.
 
 ### Model Override
 
